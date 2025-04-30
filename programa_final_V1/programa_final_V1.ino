@@ -12,9 +12,18 @@ Servo miServo3; // Servo tapa
 int pinServo = 33; 
 int pinServo2 = 32;
 int pinServo3 = 2;
+//rele pin
+int rele = 25;
 
+//pines sensores ultrasonicos
 #define TRIG_PIN 18
 #define ECHO_PIN 19
+#define TRIG2_PIN 22
+#define ECHO2_PIN 23
+
+//rele
+#define RELE_ON 0
+#define RELE_OFF 1
 
 // Ángulos servomotores
 int anguloInicialServo = 0;
@@ -27,8 +36,8 @@ int anguloInicialServo3 = 0;
 int anguloFinalServo3 = 90;
 
 // Configuración de WiFi
-const char* ssid = "queti";
-const char* password = "queti";
+const char* ssid = "Megacable-9460";
+const char* password = "t8jQKnU5EJ";
 
 // Endpoints de la API
 const char* serverGet = "https://aimeetyou.pythonanywhere.com/cola/pedidos/";
@@ -38,6 +47,8 @@ const char* serverPost = "https://aimeetyou.pythonanywhere.com/cola/actualizar/"
 void TaskServos(void * parameter);
 void TaskSensor(void * parameter);
 void TaskPedidos(void * parameter);
+// void TaskRele(void * parameter);
+void TaskSensorTamano(void * parameter);
 
 // === Setup ===
 void setup() {
@@ -52,9 +63,15 @@ void setup() {
   miServo2.write(anguloInicialServo2);
   miServo3.write(anguloInicialServo3);
 
-  // Iniciar sensor
+  // Iniciar sensores
   pinMode(TRIG_PIN, OUTPUT);
   pinMode(ECHO_PIN, INPUT);
+  pinMode(TRIG2_PIN, OUTPUT);
+  pinMode(ECHO2_PIN, INPUT);
+  
+  // Iniciar Rele
+  pinMode(rele, OUTPUT);
+  digitalWrite(rele, RELE_OFF);// Inicia apagado
 
   // Iniciar conexión WiFi
   WiFi.begin(ssid, password);
@@ -71,6 +88,8 @@ void setup() {
   xTaskCreatePinnedToCore(TaskServos, "TareaServos", 10000, NULL, 1, NULL, 0);
   xTaskCreatePinnedToCore(TaskSensor, "TareaSensor", 10000, NULL, 1, NULL, 0);
   xTaskCreatePinnedToCore(TaskPedidos, "TareaPedidos", 10000, NULL, 1, NULL, 1);
+  // xTaskCreatePinnedToCore(TaskRele, "TareaRele",10000,NULL,1,NULL,0);
+  xTaskCreatePinnedToCOre(TaskSensorTamano,"TareaSensorValumen", 10000, NULL, 1, NULL, 1);
 }
 
 void loop() {
@@ -111,6 +130,43 @@ void TaskSensor(void * parameter) {
     delay(200); // Verificación rápida
   }
 }
+
+void TaskSensorTamano(void * parameter){
+  for (;;) {
+    digitalWrite(TRIG2_PIN, LOW);
+    delayMicroseconds(2);
+    digitalWrite(TRIG2_PIN, HIGH);
+    delayMicroseconds(10);
+    digitalWrite(TRIG2_PIN, LOW);
+
+    long duracion = pulseIn(ECHO2_PIN, HIGH);
+    float distancia = duracion * 0.034 / 2;
+
+    if (distancia > 0 && distancia < 4) {
+      //apagar rele, palomitas suficientes
+      digitalWrite(rele, RELE_OFF);
+      delay(10000);
+    } else {
+      //encender rele, cocinar palomitas
+      digitalWrite(rele, RELE_ON);
+      delay(20000);
+    }
+
+    delay(200); // Verificación rápida
+  }
+}
+
+// === Tarea: Encender y Apagar Rele
+/*void TaskRele(void * parameter){
+  for(;;){
+    //Encender Rele segundos
+    digitalWrite(rele, RELE_ON);
+    delay(20000);
+    //Apagar Rele 20 segundos
+    digitalWrite(rele, RELE_OFF);
+    delay(10000);
+    }
+  }*/
 
 // === Tarea: Procesar pedidos ===
 void TaskPedidos(void * parameter) {
