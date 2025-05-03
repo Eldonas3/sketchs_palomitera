@@ -1,61 +1,54 @@
+// === LIBRERIAS ===
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 #include <ESP32Servo.h>
 
-// === Servomotores ===
-Servo miServo; // Servo olla izquierda
-Servo miServo2; // Servo olla derecha
-Servo miServo3; // Servo tapa
+// === SERVOMOTORES ===
+Servo miServo;   // Olla izquierda
+Servo miServo2;  // Olla derecha
+Servo miServo3;  // Tapa
 
-// Pines
-int pinServo = 33; 
+// === PINES ===
+int pinServo = 33;
 int pinServo2 = 32;
 int pinServo3 = 2;
-//rele pin
-int rele = 25;
 
-//pines sensores ultrasonicos
-#define TRIG_PIN 18
+#define TRIG_PIN 18     // Sensor tapa
 #define ECHO_PIN 19
-#define TRIG2_PIN 22
-#define ECHO2_PIN 23
+#define TRIG2_PIN 25    // Sensor palomitas
+#define ECHO2_PIN 26
+#define RELE_PIN 27     // Relevador
 
-//rele
-#define RELE_ON 0
-#define RELE_OFF 1
-
-// Ángulos servomotores
+// === ANGULOS ===
 int anguloInicialServo = 0;
 int anguloFinalServo = 110;
-
 int anguloInicialServo2 = 180;
 int anguloFinalServo2 = 70;
-
 int anguloInicialServo3 = 0;
 int anguloFinalServo3 = 90;
 
-// Configuración de WiFi
-const char* ssid = "Megacable-9460";
-const char* password = "t8jQKnU5EJ";
-
-// Endpoints de la API
-const char* serverGet = "https://aimeetyou.pythonanywhere.com/cola/pedidos/";
+// === WIFI Y API ===
+const char* ssid = "uwuntu";
+const char* password = "1234567890";
+const char* serverGet = "https://aimeetyou.pythonanywhere.com/cola/pendientes/";
 const char* serverPost = "https://aimeetyou.pythonanywhere.com/cola/actualizar/";
 
-// === Tareas ===
-void TaskServos(void * parameter);
-void TaskSensor(void * parameter);
-void TaskPedidos(void * parameter);
-// void TaskRele(void * parameter);
-void TaskSensorTamano(void * parameter);
+// === TAREAS ===
+void TaskServos(void *);
+void TaskSensorTapa(void *);
+void TaskRele(void *);
+void TaskPedidos(void *);
 
-// === Setup ===
+// === FUNCIONES ===
+void procesarPedido();
+void actualizarEstadoPedido(int, int);
+float medirDistancia(int trig, int echo);
+
 void setup() {
   Serial.begin(115200);
-  delay(1000);
 
-  // Iniciar servos
+  // Servos
   miServo.attach(pinServo);
   miServo2.attach(pinServo2);
   miServo3.attach(pinServo3);
@@ -63,194 +56,144 @@ void setup() {
   miServo2.write(anguloInicialServo2);
   miServo3.write(anguloInicialServo3);
 
-  // Iniciar sensores
+  // Pines sensores y relevador
   pinMode(TRIG_PIN, OUTPUT);
   pinMode(ECHO_PIN, INPUT);
   pinMode(TRIG2_PIN, OUTPUT);
   pinMode(ECHO2_PIN, INPUT);
-  
-  // Iniciar Rele
-  pinMode(rele, OUTPUT);
-  digitalWrite(rele, RELE_OFF);// Inicia apagado
+  pinMode(RELE_PIN, OUTPUT);
+  digitalWrite(RELE_PIN, LOW);
 
-  // Iniciar conexión WiFi
+  // WiFi
   WiFi.begin(ssid, password);
-  Serial.println("Conectando a WiFi...");
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
     Serial.print(".");
   }
-  Serial.println("\nWiFi conectado");
-  Serial.println("Dirección IP: ");
-  Serial.println(WiFi.localIP());
+  Serial.println("\nWiFi conectado: " + WiFi.localIP().toString());
 
-  // Crear tareas
-  xTaskCreatePinnedToCore(TaskServos, "TareaServos", 10000, NULL, 1, NULL, 0);
-  xTaskCreatePinnedToCore(TaskSensor, "TareaSensor", 10000, NULL, 1, NULL, 0);
-  xTaskCreatePinnedToCore(TaskPedidos, "TareaPedidos", 10000, NULL, 1, NULL, 1);
-  // xTaskCreatePinnedToCore(TaskRele, "TareaRele",10000,NULL,1,NULL,0);
-  xTaskCreatePinnedToCOre(TaskSensorTamano,"TareaSensorValumen", 10000, NULL, 1, NULL, 1);
+  // TAREAS
+  xTaskCreatePinnedToCore(TaskServos, "Servos", 10000, NULL, 1, NULL, 0);
+  xTaskCreatePinnedToCore(TaskSensorTapa, "SensorTapa", 10000, NULL, 1, NULL, 0);
+  xTaskCreatePinnedToCore(TaskRele, "Rele", 10000, NULL, 1, NULL, 0);
+  xTaskCreatePinnedToCore(TaskPedidos, "Pedidos", 10000, NULL, 1, NULL, 1);
 }
 
-void loop() {
-  // Loop vacío porque todo corre en tareas
-}
+void loop() {}
 
-// === Tarea: Girar servos de la olla ===
+// === TAREA: Servos de olla ===
 void TaskServos(void * parameter) {
   for (;;) {
-    miServo.write(anguloFinalServo);       // Servo 1 a 110°
-    miServo2.write(anguloFinalServo2);      // Servo 2 a 70°
+    miServo.write(anguloFinalServo);
+    miServo2.write(anguloFinalServo2);
     delay(5000);
-
-    miServo.write(anguloInicialServo);      // Servo 1 a 0°
-    miServo2.write(anguloInicialServo2);    // Servo 2 a 180°
+    miServo.write(anguloInicialServo);
+    miServo2.write(anguloInicialServo2);
     delay(5000);
   }
 }
 
-// === Tarea: Leer sensor y mover tapa ===
-void TaskSensor(void * parameter) {
+// === TAREA: Sensor de tapa ===
+void TaskSensorTapa(void * parameter) {
   for (;;) {
-    digitalWrite(TRIG_PIN, LOW);
-    delayMicroseconds(2);
-    digitalWrite(TRIG_PIN, HIGH);
-    delayMicroseconds(10);
-    digitalWrite(TRIG_PIN, LOW);
-
-    long duracion = pulseIn(ECHO_PIN, HIGH);
-    float distancia = duracion * 0.034 / 2;
-
-    if (distancia > 0 && distancia < 20) {
+    float d = medirDistancia(TRIG_PIN, ECHO_PIN);
+    if (d > 0 && d < 5) {
       miServo3.write(anguloFinalServo3);
     } else {
       miServo3.write(anguloInicialServo3);
     }
-
-    delay(200); // Verificación rápida
+    delay(200);
   }
 }
 
-void TaskSensorTamano(void * parameter){
+// === TAREA: Sensor palomitas y rele ===
+void TaskRele(void * parameter) {
+  bool calentando = false;
+  unsigned long inicio = 0;
   for (;;) {
-    digitalWrite(TRIG2_PIN, LOW);
-    delayMicroseconds(2);
-    digitalWrite(TRIG2_PIN, HIGH);
-    delayMicroseconds(10);
-    digitalWrite(TRIG2_PIN, LOW);
-
-    long duracion = pulseIn(ECHO2_PIN, HIGH);
-    float distancia = duracion * 0.034 / 2;
-
-    if (distancia > 0 && distancia < 4) {
-      //apagar rele, palomitas suficientes
-      digitalWrite(rele, RELE_OFF);
-      delay(10000);
+    float d = medirDistancia(TRIG2_PIN, ECHO2_PIN);
+    if (d > 4.0) { //distancia minimia para detectar palomitas
+      if (!calentando) {
+        digitalWrite(RELE_PIN, HIGH);
+        calentando = true;
+        inicio = millis();
+        Serial.println("[RELE] Activado por falta de palomitas");
+      }
     } else {
-      //encender rele, cocinar palomitas
-      digitalWrite(rele, RELE_ON);
-      delay(20000);
+      if (calentando && millis() - inicio >= 20000UL) { // mínimo 20 segundos
+        digitalWrite(RELE_PIN, LOW);
+        calentando = false;
+        Serial.println("[RELE] Desactivado, suficientes palomitas");
+      }
     }
-
-    delay(200); // Verificación rápida
+    delay(1000);
   }
 }
 
-// === Tarea: Encender y Apagar Rele
-/*void TaskRele(void * parameter){
-  for(;;){
-    //Encender Rele segundos
-    digitalWrite(rele, RELE_ON);
-    delay(20000);
-    //Apagar Rele 20 segundos
-    digitalWrite(rele, RELE_OFF);
-    delay(10000);
-    }
-  }*/
-
-// === Tarea: Procesar pedidos ===
+// === TAREA: Procesamiento de pedidos ===
 void TaskPedidos(void * parameter) {
   for (;;) {
     procesarPedido();
-    delay(10000); // Espera antes de consultar nuevos pedidos
+    delay(20000); // espera antes del siguiente
   }
 }
 
-// === Función: procesarPedido ===
 void procesarPedido() {
   if (WiFi.status() == WL_CONNECTED) {
     HTTPClient http;
-
     http.begin(serverGet);
-    int httpResponseCode = http.GET();
-
-    if (httpResponseCode > 0) {
-      String response = http.getString();
-      Serial.println("Respuesta del servidor:");
-      Serial.println(response);
-
+    int httpCode = http.GET();
+    if (httpCode > 0) {
+      String res = http.getString();
       StaticJsonDocument<2048> doc;
-      DeserializationError error = deserializeJson(doc, response);
+      DeserializationError err = deserializeJson(doc, res);
+      if (!err && doc.size() > 0) {
+        JsonObject pedido = doc[0];
+        int id = pedido["id_pedido"];
+        int cantidad = pedido["palomitas"];
+        Serial.printf("[PEDIDO] ID: %d, Palomitas: %d\n", id, cantidad);
 
-      if (!error) {
-        if (doc.size() > 0) {
-          JsonObject pedido = doc[0];
-          int id_pedido = pedido["id_pedido"];
-
-          Serial.print("Procesando Pedido ID: ");
-          Serial.println(id_pedido);
-
-          // Cambiar a estado 2
-          actualizarEstadoPedido(id_pedido, 2);
-
-          // Esperar 5 segundos
-          delay(5000);
-
-          // Cambiar a estado 3
-          actualizarEstadoPedido(id_pedido, 3);
-
-          Serial.println("Pedido procesado completamente.");
-        } else {
-          Serial.println("No hay pedidos pendientes.");
+        // Esperar detección por 3s
+        int detectados = 0;
+        for (int i = 0; i < 15; i++) {
+          float d = medirDistancia(TRIG_PIN, ECHO_PIN);
+          if (d > 0 && d < 20) detectados++;
+          delay(200);
         }
-      } else {
-        Serial.print("Error parseando JSON: ");
-        Serial.println(error.c_str());
+        if (detectados >= 10) {
+          actualizarEstadoPedido(id, 2);
+          miServo3.write(anguloFinalServo3);
+          int tiempo = (cantidad == 1) ? 5000 : (cantidad == 2) ? 6000 : (cantidad == 3) ? 7000 : 5000;
+          delay(tiempo);
+          miServo3.write(anguloInicialServo3);
+          delay(500);
+          actualizarEstadoPedido(id, 3);
+        } else {
+          Serial.println("[PEDIDO] No se detectó presencia durante 3s continuos");
+        }
       }
-
-    } else {
-      Serial.print("Error en solicitud GET. Código: ");
-      Serial.println(httpResponseCode);
     }
-
     http.end();
-  } else {
-    Serial.println("WiFi desconectado");
   }
 }
 
-// === Función: actualizarEstadoPedido ===
-void actualizarEstadoPedido(int idPedido, int nuevoEstado) {
-  if (WiFi.status() == WL_CONNECTED) {
-    HTTPClient http;
-    http.begin(serverPost);
-    http.addHeader("Content-Type", "application/json");
+void actualizarEstadoPedido(int id, int estado) {
+  HTTPClient http;
+  http.begin(serverPost);
+  http.addHeader("Content-Type", "application/json");
+  String json = "{\"id_pedido\":" + String(id) + ",\"estado_pedido\":" + String(estado) + "}";
+  int code = http.POST(json);
+  String res = http.getString();
+  Serial.printf("[POST] Estado %d -> %s\n", estado, res.c_str());
+  http.end();
+}
 
-    String postData = "{\"id_pedido\":" + String(idPedido) + ",\"estado_pedido\":" + String(nuevoEstado) + "}";
-
-    int httpResponseCode = http.POST(postData);
-
-    if (httpResponseCode > 0) {
-      String response = http.getString();
-      Serial.print("Respuesta POST: ");
-      Serial.println(response);
-    } else {
-      Serial.print("Error en solicitud POST. Código: ");
-      Serial.println(httpResponseCode);
-    }
-
-    http.end();
-  } else {
-    Serial.println("WiFi desconectado");
-  }
+float medirDistancia(int trig, int echo) {
+  digitalWrite(trig, LOW);
+  delayMicroseconds(2);
+  digitalWrite(trig, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(trig, LOW);
+  long duracion = pulseIn(echo, HIGH);
+  return duracion * 0.034 / 2;
 }
